@@ -1,9 +1,19 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type { Dayjs } from "dayjs";
 import type { CalendarProps } from "antd";
-import { Badge, Button, Calendar } from "antd";
+import {
+  Badge,
+  Button,
+  Calendar,
+  DatePicker,
+  Form,
+  Input,
+  Modal,
+  Select,
+} from "antd";
 
 import "./index.css";
+import dayjs from "dayjs";
 
 const RANDOM_COLORS = [
   "blue",
@@ -35,21 +45,33 @@ const RANDOM_WORDS = [
   "piquant",
   "synonymous",
 ] as const;
-const ORGANIZATION_ID_TO_NAMES = {
+const ORGANIZATION_ID_TO_NAMES: Record<string, string> = {
   helloworld: "Helloworld",
   bookinfo: "Bookinfo",
   paperinfo: "Paperinfo",
   loremipsum: "Loremipsum",
   pingpong: "Pingpong",
   alicebob: "Alice and Bob Inc.",
-} as const;
+};
 const ORGANIZATION_IDS = Object.keys(ORGANIZATION_ID_TO_NAMES);
+const ORGANIZATION_LABEL_VALUES = ORGANIZATION_IDS.map((id) => ({
+  label: ORGANIZATION_ID_TO_NAMES[id],
+  value: id,
+}));
+const FILTER_ORGANIZATION_LABEL_VALUES = [
+  { label: "All organizations", value: "" },
+  ...ORGANIZATION_LABEL_VALUES,
+];
+
+interface OrganizationEvent {
+  id: string;
+  orgId: string;
+  eventName: string;
+  eventTime: Dayjs;
+}
 
 interface CalendarState {
-  dateToEventsRecord: Record<
-    string,
-    Array<{ orgId: string; eventName: string; eventTime: Date }>
-  >;
+  dateToEventsRecord: Record<string, Array<OrganizationEvent>>;
   companyIdToColorRecord: Record<string, (typeof RANDOM_COLORS)[number]>;
 }
 
@@ -68,22 +90,44 @@ const App: React.FC = () => {
       }, {} as CalendarState["companyIdToColorRecord"]),
     };
   });
+  const [form] = Form.useForm();
+
+  const [current, setCurrent] = useState(dayjs());
+  const [modalMode, setModalMode] = useState<null | "create" | "update">(null);
+  const [selectedOrganization, setSelectedOrganization] = useState("");
+
+  useEffect(() => {
+    form.setFieldsValue({
+      id: "-1",
+      eventTime: dayjs(),
+    });
+  }, [form]);
 
   const dateCellRender = (value: Dayjs) => {
     const listData = getListData(
       calendarState.dateToEventsRecord,
       calendarState.companyIdToColorRecord,
-      value
+      value,
+      selectedOrganization
     );
     return (
       <ul className="events">
         {listData.map((item) => (
-          <li key={item.content}>
+          <li key={`${item.event.orgId}-${item.event.eventName}`}>
             <Button
               type="text"
               className="w-full whitespace-normal text-left h-auto py-0 px-1"
+              onClick={() => {
+                setModalMode("update");
+                form.setFieldsValue(item.event);
+              }}
             >
-              <Badge color={item.color} text={item.content} />
+              <Badge
+                color={item.color}
+                text={`[${ORGANIZATION_ID_TO_NAMES[item.event.orgId]}] ${
+                  item.event.eventName
+                }`}
+              />
             </Button>
           </li>
         ))}
@@ -96,7 +140,112 @@ const App: React.FC = () => {
     return info.originNode;
   };
 
-  return <Calendar cellRender={cellRender} />;
+  function onFormSubmit(values: OrganizationEvent) {
+    setCalendarState((prev) => {
+      const formattedDate = dayjs(values.eventTime).format("YYYY-MM-DD");
+      const newDateEventsRecord = { ...prev.dateToEventsRecord };
+
+      let newDateEvents = newDateEventsRecord[formattedDate];
+      if (!newDateEvents) {
+        newDateEvents = [];
+      } else {
+        newDateEvents = [...newDateEvents];
+      }
+
+      const matchingIdx = newDateEvents.findIndex(
+        (event) => event.id === values.id
+      );
+      if (matchingIdx > -1) {
+        newDateEvents[matchingIdx] = values;
+      } else {
+        newDateEvents.push(values);
+      }
+
+      newDateEventsRecord[formattedDate] = newDateEvents;
+
+      return {
+        ...prev,
+        dateToEventsRecord: newDateEventsRecord,
+      };
+    });
+    setModalMode(null);
+
+    form.resetFields();
+    form.setFieldsValue({
+      id: "-1",
+      eventTime: dayjs(),
+    });
+  }
+
+  return (
+    <main>
+      <div className="p-4">
+        <Calendar
+          cellRender={cellRender}
+          onChange={(value) => setCurrent(value)}
+          value={current}
+          headerRender={() => (
+            <div className="flex justify-between mb-4">
+              <Form className="flex gap-x-2">
+                <Form.Item>
+                  <DatePicker
+                    picker="month"
+                    format="MMMM YYYY"
+                    value={current}
+                    onChange={(value) => {
+                      if (!value) return;
+                      setCurrent(value);
+                    }}
+                  />
+                </Form.Item>
+
+                <Form.Item>
+                  <Select
+                    defaultValue=""
+                    options={FILTER_ORGANIZATION_LABEL_VALUES}
+                    onChange={(value) => setSelectedOrganization(value)}
+                  />
+                </Form.Item>
+              </Form>
+
+              <div>
+                <Button type="primary" onClick={() => setModalMode("create")}>
+                  Create new event
+                </Button>
+              </div>
+            </div>
+          )}
+        />
+      </div>
+
+      <Modal
+        open={modalMode !== null}
+        centered
+        title="Create new event"
+        okButtonProps={{ htmlType: "submit", form: "create-new-event" }}
+        okText={modalMode === "create" ? "Create event" : "Update event"}
+        onCancel={() => setModalMode(null)}
+      >
+        <Form onFinish={onFormSubmit} name="create-new-event" form={form}>
+          <Form.Item name="id" hidden>
+            <Input />
+          </Form.Item>
+
+          <Form.Item name="orgId" label="Organization">
+            <Select options={ORGANIZATION_LABEL_VALUES} />
+          </Form.Item>
+
+          <Form.Item name="eventName" label="Event name">
+            <Input />
+          </Form.Item>
+
+          <Form.Item name="eventTime" label="Event time">
+            <DatePicker />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </main>
+  );
 };
 
 export default App;
@@ -105,20 +254,24 @@ export default App;
 function getListData(
   dateToEventsRecord: CalendarState["dateToEventsRecord"],
   companyIdToColors: CalendarState["companyIdToColorRecord"],
-  value: Dayjs
+  value: Dayjs,
+  selectedOrganization: string
 ) {
   const formatted = value.format("YYYY-MM-DD");
-  const events = dateToEventsRecord[formatted];
+  let events = dateToEventsRecord[formatted];
 
   if (!events) return [];
+  if (selectedOrganization)
+    events = events.filter((event) => event.orgId === selectedOrganization);
 
   const result = events.map((event) => ({
     color: companyIdToColors[event.orgId],
-    content: event.eventName,
-    time: event.eventTime,
+    event,
   }));
   result.sort((a, b) =>
-    a.time.toISOString().localeCompare(b.time.toISOString())
+    a.event.eventTime
+      .toISOString()
+      .localeCompare(b.event.eventTime.toISOString())
   );
 
   return result;
@@ -138,7 +291,7 @@ function populateData(dateParam: Date) {
 
     result[key] = result[key] || [];
 
-    numberOfEvents.forEach(() => {
+    numberOfEvents.forEach((_, eventIndex) => {
       const orgIdIndex = Math.floor(Math.random() * ORGANIZATION_IDS.length);
       const eventName1 =
         RANDOM_WORDS[Math.floor(Math.random() * RANDOM_WORDS.length)];
@@ -146,8 +299,9 @@ function populateData(dateParam: Date) {
         RANDOM_COLORS[Math.floor(Math.random() * RANDOM_COLORS.length)];
 
       result[key].push({
+        id: `${key}-${eventIndex}`,
         eventName: `${eventName1}-${eventName2}`,
-        eventTime: new Date(
+        eventTime: dayjs(
           new Date(key).valueOf() + Math.floor(Math.random() * 86400)
         ),
         orgId: ORGANIZATION_IDS[orgIdIndex],
