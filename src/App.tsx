@@ -10,6 +10,7 @@ import {
   Input,
   Modal,
   Select,
+  Timeline,
 } from "antd";
 
 import "./index.css";
@@ -95,6 +96,9 @@ const App: React.FC = () => {
   const [current, setCurrent] = useState(dayjs());
   const [modalMode, setModalMode] = useState<null | "create" | "update">(null);
   const [selectedOrganization, setSelectedOrganization] = useState("");
+  const [singleViewMode, setSingleViewMode] = useState<"calendar" | "timeline">(
+    "calendar"
+  );
 
   useEffect(() => {
     form.setFieldsValue({
@@ -104,12 +108,12 @@ const App: React.FC = () => {
   }, [form]);
 
   const dateCellRender = (value: Dayjs) => {
-    const listData = getListData(
-      calendarState.dateToEventsRecord,
-      calendarState.companyIdToColorRecord,
+    const listData = getListData({
+      dateToEventsRecord: calendarState.dateToEventsRecord,
+      companyIdToColors: calendarState.companyIdToColorRecord,
       value,
-      selectedOrganization
-    );
+      selectedOrganization,
+    });
     return (
       <ul className="events">
         {listData.map((item) => (
@@ -180,48 +184,72 @@ const App: React.FC = () => {
   return (
     <main>
       <div className="p-4">
-        <Calendar
-          cellRender={cellRender}
-          onChange={(value) => setCurrent(value)}
-          value={current}
-          headerRender={() => (
-            <div className="flex justify-between mb-4">
-              <Form className="flex gap-x-2">
-                <Form.Item>
-                  <DatePicker
-                    picker="month"
-                    format="MMMM YYYY"
-                    value={current}
-                    onChange={(value) => {
-                      if (!value) return;
-                      setCurrent(value);
-                    }}
-                  />
-                </Form.Item>
+        <div className="flex justify-between mb-4">
+          <Form className="flex gap-x-2">
+            <Form.Item>
+              <DatePicker
+                picker="month"
+                format="MMMM YYYY"
+                value={current}
+                onChange={(value) => {
+                  if (!value) return;
+                  setCurrent(value);
+                }}
+              />
+            </Form.Item>
 
-                <Form.Item>
-                  <Select
-                    defaultValue=""
-                    options={FILTER_ORGANIZATION_LABEL_VALUES}
-                    onChange={(value) => setSelectedOrganization(value)}
-                  />
-                </Form.Item>
-              </Form>
+            <Form.Item>
+              <Select
+                value={selectedOrganization}
+                options={FILTER_ORGANIZATION_LABEL_VALUES}
+                onChange={(value) => setSelectedOrganization(value)}
+              />
+            </Form.Item>
 
-              <div>
-                <Button type="primary" onClick={() => setModalMode("create")}>
-                  Create new event
-                </Button>
-              </div>
-            </div>
-          )}
-        />
+            {selectedOrganization !== "" && (
+              <Form.Item>
+                <Select
+                  value={singleViewMode}
+                  options={[
+                    { label: "Calendar", value: "calendar" },
+                    { label: "Timeline", value: "timeline" },
+                  ]}
+                  onChange={(value) =>
+                    setSingleViewMode(value as "timeline" | "calendar")
+                  }
+                />
+              </Form.Item>
+            )}
+          </Form>
+
+          <div>
+            <Button type="primary" onClick={() => setModalMode("create")}>
+              Create new event
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4">
+        {selectedOrganization === "" || singleViewMode === "calendar" ? (
+          <Calendar
+            cellRender={cellRender}
+            onChange={(value) => setCurrent(value)}
+            value={current}
+            headerRender={() => null}
+          />
+        ) : (
+          <TimelineComponent
+            calendarState={calendarState}
+            selectedOrganization={selectedOrganization}
+          />
+        )}
       </div>
 
       <Modal
         open={modalMode !== null}
         centered
-        title="Create new event"
+        title={modalMode === "create" ? "Create event" : "Update event"}
         okButtonProps={{ htmlType: "submit", form: "create-new-event" }}
         okText={modalMode === "create" ? "Create event" : "Update event"}
         onCancel={() => setModalMode(null)}
@@ -250,15 +278,85 @@ const App: React.FC = () => {
 
 export default App;
 
+function TimelineComponent({
+  calendarState,
+  selectedOrganization,
+}: {
+  calendarState: CalendarState;
+  selectedOrganization: string;
+}) {
+  const listData = getListData({
+    dateToEventsRecord: calendarState.dateToEventsRecord,
+    companyIdToColors: calendarState.companyIdToColorRecord,
+    selectedOrganization,
+  });
+  const timelineByDate: Record<string, typeof listData> = {};
+
+  for (const eventInfo of listData) {
+    const formatted = eventInfo.event.eventTime.format("YYYY-MM-DD");
+    if (!timelineByDate[formatted]) {
+      timelineByDate[formatted] = [];
+    }
+
+    timelineByDate[formatted].push(eventInfo);
+  }
+
+  const currentDate = dayjs().format("YYYY-MM-DD");
+
+  return (
+    <Timeline>
+      {Object.keys(timelineByDate).map((date) => {
+        const item = timelineByDate[date];
+
+        console.info(currentDate, dayjs(date).format("YYYY-MM-DD"));
+        return (
+          <Timeline.Item
+            key={date}
+            color={
+              currentDate === dayjs(date).format("YYYY-MM-DD")
+                ? "blue"
+                : dayjs(date).isAfter(dayjs(currentDate))
+                ? "gray"
+                : "green"
+            }
+          >
+            <div>{date}</div>
+
+            <ul>
+              {item.map((eventInfo) => (
+                <li key={eventInfo.event.id}>
+                  {eventInfo.event.eventTime.format("HH:mm")}{" "}
+                  {eventInfo.event.eventName}
+                </li>
+              ))}
+            </ul>
+          </Timeline.Item>
+        );
+      })}
+    </Timeline>
+  );
+}
+
 // Helper functions.
-function getListData(
-  dateToEventsRecord: CalendarState["dateToEventsRecord"],
-  companyIdToColors: CalendarState["companyIdToColorRecord"],
-  value: Dayjs,
-  selectedOrganization: string
-) {
-  const formatted = value.format("YYYY-MM-DD");
-  let events = dateToEventsRecord[formatted];
+function getListData({
+  dateToEventsRecord,
+  companyIdToColors,
+  value,
+  selectedOrganization,
+}: {
+  dateToEventsRecord: CalendarState["dateToEventsRecord"];
+  companyIdToColors: CalendarState["companyIdToColorRecord"];
+  value?: Dayjs;
+  selectedOrganization: string;
+}) {
+  let events: OrganizationEvent[];
+
+  if (value) {
+    const formatted = value.format("YYYY-MM-DD");
+    events = dateToEventsRecord[formatted];
+  } else {
+    events = Object.values(dateToEventsRecord).flat();
+  }
 
   if (!events) return [];
   if (selectedOrganization)
@@ -282,7 +380,7 @@ function populateData(dateParam: Date) {
   const month = dateParam.getUTCMonth() + 1;
   const date = dateParam.getUTCDate();
 
-  const array = new Array(13).fill(1);
+  const array = new Array(15).fill(1);
   const result: CalendarState["dateToEventsRecord"] = {};
 
   array.forEach((_, idx) => {
